@@ -21,6 +21,7 @@ _START_VOCAB = [PAD,]
 UNK_ID = 0
 PAD_ID_WORD = 1
 PAD_ID_CHAR = 1
+PAD_ID_CHUNK = 1
 PAD_ID_TAG = 0
 
 NUM_SYMBOLIC_TAGS = 1
@@ -45,11 +46,11 @@ def create_alphabets(alphabet_directory, train_path, data_paths=None, max_vocabu
                     tokens = line.split(' ')
                     word = utils.DIGIT_RE.sub(b"0", tokens[1]) if normalize_digits else tokens[1]
                     pos = tokens[2]
-                    chunk = tokens[3]
+                    trigger = tokens[3]
                     ner = tokens[4]
 
                     pos_alphabet.add(pos)
-                    chunk_alphabet.add(chunk)
+                    chunk_alphabet.add(trigger)
                     ner_alphabet.add(ner)
 
                     if word not in vocab_set and (word in embedd_dict or word.lower() in embedd_dict):
@@ -60,7 +61,7 @@ def create_alphabets(alphabet_directory, train_path, data_paths=None, max_vocabu
     word_alphabet = Alphabet('word', defualt_value=True, singleton=True)
     char_alphabet = Alphabet('character', defualt_value=True)
     pos_alphabet = Alphabet('pos')
-    chunk_alphabet = Alphabet('chunk')
+    chunk_alphabet = Alphabet('chunk', defualt_value=True)
     ner_alphabet = Alphabet('ner')
 
     if not os.path.isdir(alphabet_directory):
@@ -220,7 +221,7 @@ def get_batch(data, batch_size, word_alphabet=None, unk_replace=0.):
         pid_inputs[b, inst_size:] = PAD_ID_TAG
         # chunk ids
         chid_inputs[b, :inst_size] = chids
-        chid_inputs[b, inst_size:] = PAD_ID_TAG
+        chid_inputs[b, inst_size:] = PAD_ID_CHUNK
         # ner ids
         nid_inputs[b, :inst_size] = nids
         nid_inputs[b, inst_size:] = PAD_ID_TAG
@@ -278,7 +279,7 @@ def iterate_batch(data, batch_size, word_alphabet=None, unk_replace=0., shuffle=
             pid_inputs[i, inst_size:] = PAD_ID_TAG
             # chunk ids
             chid_inputs[i, :inst_size] = chids
-            chid_inputs[i, inst_size:] = PAD_ID_TAG
+            chid_inputs[i, inst_size:] = PAD_ID_CHUNK
             # heads
             nid_inputs[i, :inst_size] = nids
             nid_inputs[i, inst_size:] = PAD_ID_TAG
@@ -311,6 +312,7 @@ def read_data_to_variable(source_path, word_alphabet, char_alphabet, pos_alphabe
     data, max_char_length = read_data(source_path, word_alphabet, char_alphabet, pos_alphabet,
                                       chunk_alphabet, ner_alphabet,
                                       max_size=max_size, normalize_digits=normalize_digits)
+
     bucket_sizes = [len(data[b]) for b in range(len(_buckets))]
 
     data_variable = []
@@ -350,7 +352,7 @@ def read_data_to_variable(source_path, word_alphabet, char_alphabet, pos_alphabe
             pid_inputs[i, inst_size:] = PAD_ID_TAG
             # chunk ids
             chid_inputs[i, :inst_size] = chids
-            chid_inputs[i, inst_size:] = PAD_ID_TAG
+            chid_inputs[i, inst_size:] = PAD_ID_CHUNK
             # ner ids
             nid_inputs[i, :inst_size] = nids
             nid_inputs[i, inst_size:] = PAD_ID_TAG

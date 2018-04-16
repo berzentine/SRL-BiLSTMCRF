@@ -1,2 +1,2 @@
 #!/usr/bin/env bash
- ./examples/run_ner_crf.sh
+ ./examples/run_srl_crf.sh

@@ -1,3 +1,5 @@
+__author__ = 'Nidhi'
+
 #Part 2
 # Update the new model - transfer learning part
 def transfer():

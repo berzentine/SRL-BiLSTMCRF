@@ -36,9 +36,11 @@ class BiRecurrentConv(nn.Module):
 
         self.dense = None
         out_dim = hidden_size * 2
+        self.od = out_dim
         if tag_space:
             self.dense = nn.Linear(out_dim, tag_space)
             out_dim = tag_space
+            self.od = out_dim
         self.dense_softmax = nn.Linear(out_dim, num_labels)
         self.logsoftmax = nn.LogSoftmax(dim=1)
         self.nll_loss = nn.NLLLoss(size_average=False, reduce=False)

@@ -16,12 +16,16 @@ import argparse
 import uuid
 
 import numpy as np
+import copy
+import torch.nn as nn
 import torch
 from torch.optim import Adam, SGD
 from neuronlp2 import utils
+from neuronlp2.models import BiRecurrentConvCRF
+from neuronlp2.io import get_logger, srl_data, CoNLL03Writer, conll03_data
+from span_based_f1_measure import proxy_eval
 
-from neuronlp2.io import get_logger, srl_data, CoNLL03Writer
-
+uid = uuid.uuid4().hex[:6]
 
 def evaluate(output_file):
     # open the file and make list of lists
@@ -64,15 +68,6 @@ def evaluate(output_file):
     #pass
     # should evaluate the input file and return a score for each metric
 
-
-#Part 1
-
-# train the first model
-    # TODO: Keep saving the best model
-    # Change the scoring script too http://www.lsi.upc.edu/~srlconll/examples.html
-
-# part 1 should return the best saved model based on validation
-# TODO: Also log accuracy and precision for graphs
 def main():
     parser = argparse.ArgumentParser(description='Tuning with bi-directional RNN-CNN-CRF')
     parser.add_argument('--mode', choices=['RNN', 'LSTM', 'GRU'], help='architecture of rnn', required=True)
@@ -93,12 +88,19 @@ def main():
     parser.add_argument('--unk_replace', type=float, default=0., help='The rate to replace a singleton word with UNK')
     parser.add_argument('--embedding', choices=['glove', 'senna', 'sskip', 'polyglot'], help='Embedding for words', required=True)
     parser.add_argument('--embedding_dict', help='path for embedding dict')
+    parser.add_argument('--transfer_num_epochs', type=int, default=100, help='Number of training epochs after transfering the model')
     parser.add_argument('--train')  # "data/POS-penn/wsj/split1/wsj1.train.original"
     parser.add_argument('--dev')  # "data/POS-penn/wsj/split1/wsj1.dev.original"
     parser.add_argument('--test')  # "data/POS-penn/wsj/split1/wsj1.test.original"
     # Arguments for provding where to get transfer learn data
+
+    parser.add_argument('--num_layers', type=int, default=1, help='Number of filters in CNN')
+    parser.add_argument('--p_in', type=float, default=0.33, help='dropout rate for input embeddings')
+    parser.add_argument('--p_out', type=float, default=0.33, help='dropout rate for output layer')
+
     parser.add_argument('--t_train')
     parser.add_argument('--t_dev')
+    parser.add_argument('--result_path',  type=str)
     parser.add_argument('--t_test')
     parser.add_argument('--alphabet_path', type=str, default="data/alphabets/transfer_srl_crf_12/")
     parser.add_argument('--transfer', type=bool, default=True, help='Flag to activate transfer learning') # flag to either run the transfer learning module or not
@@ -111,6 +113,7 @@ def main():
     mode = args.mode
     model_best_path = args.model_best_path
     train_path = args.train
+    transfer_num_epochs = args.transfer_num_epochs
     dev_path = args.dev
     test_path = args.test
     transfer_train_path = args.t_train
@@ -120,6 +123,7 @@ def main():
     num_epochs = args.num_epochs
     alphabet_path = args.alphabet_path
     batch_size = args.batch_size
+    res_path = args.result_path
     hidden_size = args.hidden_size
     num_filters = args.num_filters
     learning_rate = args.learning_rate
@@ -134,6 +138,14 @@ def main():
     embedding_path = args.embedding_dict
 
     embedd_dict, embedd_dim = utils.load_embedding_dict(embedding, embedding_path)
+
+    with open(res_path, 'w') as rp:
+        #print(args)
+        dic_args = vars(args)
+        for d in dic_args:
+            rp.write(d+':'+str(dic_args[d])+'\t')
+        rp.write('\n')
+
     ###############################################################################################################################
     # Load Data from CoNLL task for SRL and the Transfer Data
     # Create alphabets from BOTH SLR and Process Bank
@@ -160,14 +172,14 @@ def main():
     logger.info("Reading Data into Variables")
     use_gpu = torch.cuda.is_available()
 
-    data_train = conll03_data.read_data_to_variable(train_path, word_alphabet, char_alphabet, pos_alphabet,
+    data_train = srl_data.read_data_to_variable(train_path, word_alphabet, char_alphabet, pos_alphabet,
                                                     chunk_alphabet, srl_alphabet, use_gpu=use_gpu)
     num_data = sum(data_train[1])
     num_labels = srl_alphabet.size()
 
-    data_dev = conll03_data.read_data_to_variable(dev_path, word_alphabet, char_alphabet, pos_alphabet,
+    data_dev = srl_data.read_data_to_variable(dev_path, word_alphabet, char_alphabet, pos_alphabet,
                                                   chunk_alphabet, srl_alphabet, use_gpu=use_gpu, volatile=True)
-    data_test = conll03_data.read_data_to_variable(test_path, word_alphabet, char_alphabet, pos_alphabet,
+    data_test = srl_data.read_data_to_variable(test_path, word_alphabet, char_alphabet, pos_alphabet,
                                                    chunk_alphabet, srl_alphabet, use_gpu=use_gpu, volatile=True)
     writer = CoNLL03Writer(word_alphabet, char_alphabet, pos_alphabet, chunk_alphabet, srl_alphabet)
 
@@ -175,7 +187,7 @@ def main():
     def construct_word_embedding_table():
         scale = np.sqrt(3.0 / embedd_dim)
         table = np.empty([word_alphabet.size(), embedd_dim], dtype=np.float32)
-        table[conll03_data.UNK_ID, :] = np.random.uniform(-scale, scale, [1, embedd_dim]).astype(np.float32)
+        table[srl_data.UNK_ID, :] = np.random.uniform(-scale, scale, [1, embedd_dim]).astype(np.float32)
         oov = 0
         for word, index in word_alphabet.items():
             if word in embedd_dict:
@@ -195,8 +207,9 @@ def main():
     char_dim = args.char_dim
     trig_dim = args.trig_dim
     window = 3
-    num_layers = 1
+    num_layers = args.num_layers
     tag_space = args.tag_space
+    initializer = nn.init.xavier_uniform
 
     if args.dropout == 'std':
         #print(tag_space, 'tag space', trig_dim, chunk_alphabet.size())
@@ -229,6 +242,8 @@ def main():
     test_precision = 0.0
     test_recall = 0.0
     best_epoch = 0
+
+    #best_model_wts = None
     # Done till here
     #exit(0)
     for epoch in range(1, num_epochs + 1):
@@ -241,11 +256,14 @@ def main():
         num_back = 0
         network.train()
         for batch in range(1, num_batches + 1):
-            word, char, _, chunks, labels, masks, lengths = conll03_data.get_batch_variable(data_train, batch_size,
+            word, char, _, chunks, labels, masks, lengths = srl_data.get_batch_variable(data_train, batch_size,
                                                                                        unk_replace=unk_replace)
 
             optim.zero_grad()
             loss = network.loss(word, char, chunks, labels, mask=masks)
+            #print(loss.volatile)
+            #print(word.volatile, char.volatile, chunks.volatile, labels.volatile)
+
             loss.backward()
             optim.step()
 
@@ -267,7 +285,7 @@ def main():
                 sys.stdout.flush()
                 num_back = len(log_info)
 
-            #break
+            break
 
         sys.stdout.write("\b" * num_back)
         sys.stdout.write(" " * num_back)
@@ -279,10 +297,10 @@ def main():
         tmp_filename = 'tmp/%s_dev%d' % (str(uid), epoch)
         writer.start(tmp_filename)
 
-        for batch in conll03_data.iterate_batch_variable(data_dev, batch_size):
+        for batch in srl_data.iterate_batch_variable(data_dev, batch_size):
             word, char, pos, chunk, labels, masks, lengths = batch
             preds, _ = network.decode(word, char, chunk, target=labels, mask=masks,
-                                         leading_symbolic=conll03_data.NUM_SYMBOLIC_TAGS)
+                                         leading_symbolic=srl_data.NUM_SYMBOLIC_TAGS)
             writer.write(word.data.cpu().numpy(), pos.data.cpu().numpy(), chunk.data.cpu().numpy(),
                          preds.cpu().numpy(), labels.data.cpu().numpy(), lengths.cpu().numpy())
         writer.close()
@@ -292,21 +310,25 @@ def main():
 
         print('dev acc: %.2f%%, precision: %.2f%%, recall: %.2f%%, F1: %.2f%%' % (acc, precision, recall, f1))
 
+        # TODO: delete this
+        best_model_wts = copy.deepcopy(network.state_dict())
+
         if dev_f1 < f1:
             dev_f1 = f1
             dev_acc = acc
             dev_precision = precision
             dev_recall = recall
             best_epoch = epoch
-            network.save_state_dict(model_best_path)
+            best_model_wts = copy.deepcopy(network.state_dict())
+            #network.save_state_dict(model_best_path)
             # evaluate on test data when better performance detected
             tmp_filename = 'tmp/%s_test%d' % (str(uid), epoch)
             writer.start(tmp_filename)
 
-            for batch in conll03_data.iterate_batch_variable(data_test, batch_size):
+            for batch in srl_data.iterate_batch_variable(data_test, batch_size):
                 word, char, pos, chunk, labels, masks, lengths = batch
                 preds, _ = network.decode(word, char, chunk, target=labels, mask=masks,
-                                          leading_symbolic=conll03_data.NUM_SYMBOLIC_TAGS)
+                                          leading_symbolic=srl_data.NUM_SYMBOLIC_TAGS)
                 writer.write(word.data.cpu().numpy(), pos.data.cpu().numpy(), chunk.data.cpu().numpy(),
                              preds.cpu().numpy(), labels.data.cpu().numpy(), lengths.cpu().numpy())
             writer.close()
@@ -323,35 +345,33 @@ def main():
 
     #plot(str(uid),res_path)
     # TODO: from here
-    def transfer():
-
-        # load and write the PB tags
-        _, _,_, _, pb_alphabet = conll03_data.create_alphabets(pb_alphabet_path, transfer_train_path,
-                                                                     data_paths=[transfer_dev_path, transfer_test_path],
-                                                                     embedd_dict=embedd_dict,
-                                                                     max_vocabulary_size=50000)
+    def transfer(network):
+        print('In transfer')
+        pb_alphabet = transfer_alphabet
         # Load data from Process Bank
-        transfer_data_train = conll03_data.read_data_to_variable(transfer_train_path, word_alphabet, char_alphabet, pos_alphabet,
-                                                      chunk_alphabet, pb_alphabet, use_gpu=use_gpu, volatile=True)
-        transfer_data_test = conll03_data.read_data_to_variable(transfer_test_path, word_alphabet, char_alphabet, pos_alphabet,
+        transfer_data_train = srl_data.read_data_to_variable(transfer_train_path, word_alphabet, char_alphabet, pos_alphabet,
+                                                      chunk_alphabet, pb_alphabet, use_gpu=use_gpu)
+        transfer_data_dev = srl_data.read_data_to_variable(transfer_train_path, word_alphabet, char_alphabet, pos_alphabet,
+                                                       chunk_alphabet, pb_alphabet, use_gpu=use_gpu, volatile=True)
+        transfer_data_test = srl_data.read_data_to_variable(transfer_test_path, word_alphabet, char_alphabet, pos_alphabet,
                                                        chunk_alphabet, pb_alphabet, use_gpu=use_gpu, volatile=True)
 
         num_data = sum(transfer_data_train[1])
         num_labels = pb_alphabet.size()
         writer = CoNLL03Writer(word_alphabet, char_alphabet, pos_alphabet, chunk_alphabet, pb_alphabet)
-
-        network.load_state_dict(torch.load(model_best_path))
         # Load previous best trained model
+        network.load_state_dict(best_model_wts)
         # Change the last layer to incorporate new Softmax layer
-        model_ft = network(pretrained=True)
-        out_dim = model_ft.od
-        model_ft.dense_softmax = nn.Linear(out_dim, num_labels)
-        model_ft.crf = ChainCRF(out_dim, num_labels, bigram=bigram)
+        out_dim = network.od
+        import torch.nn as nn
+        from neuronlp2.nn.modules import ChainCRF
+        network.dense_softmax = nn.Linear(out_dim, num_labels)
+        network.crf = ChainCRF(out_dim, num_labels, bigram=bigram)
 
         if use_gpu:
-            model_ft = model_ft.cuda()
+            network = network.cuda()
         lr = learning_rate
-        optim = SGD(model_ft.parameters(), lr=lr, momentum=momentum, weight_decay=gamma, nesterov=True)
+        optim = SGD(network.parameters(), lr=lr, momentum=momentum, weight_decay=gamma, nesterov=True)
         logger.info("Network: %s, num_layer=%d, hidden=%d, filter=%d, tag_space=%d, crf=%s" % (
             mode, num_layers, hidden_size, num_filters, tag_space, 'bigram' if bigram else 'unigram'))
         logger.info("training: l2: %f, (#training data: %d, batch: %d, dropout: %.2f, unk replace: %.2f)" % (
@@ -368,12 +388,101 @@ def main():
         test_recall = 0.0
         best_epoch = 0
         # Done till here
-        #exit(0)
+
+        for epoch in range(1, transfer_num_epochs + 1):
+            print(transfer_num_epochs, 'total epochs to do')
+            print('Transfer Epoch %d (%s(%s), learning rate=%.4f, decay rate=%.4f (schedule=%d)): ' % (
+                epoch, mode, args.dropout, lr, decay_rate, schedule))
+            train_err = 0.
+            train_total = 0.
+
+            start_time = time.time()
+            num_back = 0
+            network.train()
+            for batch in range(1, num_batches + 1):
+                word, char, _, chunks, labels, masks, lengths = srl_data.get_batch_variable(transfer_data_train, batch_size,
+                                                                                           unk_replace=unk_replace)
+
+                optim.zero_grad()
+                loss = network.loss(word, char, chunks, labels, mask=masks)
+                loss.backward()
+                optim.step()
+
+                num_inst = word.size(0)
+                train_err += loss.data[0] * num_inst
+                train_total += num_inst
+                time_ave = (time.time() - start_time) / batch
+                time_left = (num_batches - batch) * time_ave
+                # update log
+                #print(train_err, 'train error')
+                if batch % 10 == 0:
+                    sys.stdout.write("\b" * num_back)
+                    sys.stdout.write(" " * num_back)
+                    sys.stdout.write("\b" * num_back)
+                    log_info = 'train: %d/%d loss: %.4f, time left (estimated): %.2fs' % (
+                        batch, num_batches, train_err / train_total, time_left)
+                    sys.stdout.write(log_info)
+                    sys.stdout.flush()
+                    num_back = len(log_info)
+
+
+            sys.stdout.write("\b" * num_back)
+            sys.stdout.write(" " * num_back)
+            sys.stdout.write("\b" * num_back)
+            print('train: %d loss: %.4f, time: %.2fs' % (num_batches, train_err / train_total, time.time() - start_time))
+
+            # evaluate performance on dev data
+            network.eval()
+            tmp_filename = 'tmp/%s_dev_transfer%d' % (str(uid), epoch)
+            writer.start(tmp_filename)
+
+            for batch in srl_data.iterate_batch_variable(transfer_data_dev, batch_size):
+                word, char, pos, chunk, labels, masks, lengths = batch
+                preds, _ = network.decode(word, char, chunk, target=labels, mask=masks,
+                                             leading_symbolic=srl_data.NUM_SYMBOLIC_TAGS)
+                writer.write(word.data.cpu().numpy(), pos.data.cpu().numpy(), chunk.data.cpu().numpy(),
+                             preds.cpu().numpy(), labels.data.cpu().numpy(), lengths.cpu().numpy())
+            writer.close()
+            acc, precision, recall, f1 = evaluate(tmp_filename)
+            with open(res_path, 'a') as rp:
+                rp.write('Epoch: '+str(epoch)+' Result: '+str(precision)+' '+str(recall)+' '+str(f1)+'\n')
+
+            print('dev acc: %.2f%%, precision: %.2f%%, recall: %.2f%%, F1: %.2f%%' % (acc, precision, recall, f1))
+
+            if dev_f1 < f1:
+                dev_f1 = f1
+                dev_acc = acc
+                dev_precision = precision
+                dev_recall = recall
+                best_epoch = epoch
+
+                # evaluate on test data when better performance detected
+                tmp_filename = 'tmp/%s_test_transfer%d' % (str(uid), epoch)
+                writer.start(tmp_filename)
+
+                for batch in srl_data.iterate_batch_variable(transfer_data_test, batch_size):
+                    word, char, pos, chunk, labels, masks, lengths = batch
+                    preds, _ = network.decode(word, char, chunk, target=labels, mask=masks,
+                                              leading_symbolic=srl_data.NUM_SYMBOLIC_TAGS)
+                    writer.write(word.data.cpu().numpy(), pos.data.cpu().numpy(), chunk.data.cpu().numpy(),
+                                 preds.cpu().numpy(), labels.data.cpu().numpy(), lengths.cpu().numpy())
+                writer.close()
+                test_acc, test_precision, test_recall, test_f1 = evaluate(tmp_filename)
+
+            print("best dev  acc: %.2f%%, precision: %.2f%%, recall: %.2f%%, F1: %.2f%% (epoch: %d)" % (
+                dev_acc, dev_precision, dev_recall, dev_f1, best_epoch))
+            print("best test acc: %.2f%%, precision: %.2f%%, recall: %.2f%%, F1: %.2f%% (epoch: %d)" % (
+                test_acc, test_precision, test_recall, test_f1, best_epoch))
+
+            if epoch % schedule == 0:
+                lr = learning_rate / (1.0 + epoch * decay_rate)
+                optim = SGD(network.parameters(), lr=lr, momentum=momentum, weight_decay=gamma, nesterov=True)
+
+        #plot(str(uid),res_path)
         # Learn and Evaluate on that
-    transfer()
+    transfer(network)
 
 
 
 if __name__ == '__main__':
     main()
-    transfer()

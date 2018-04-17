@@ -11,7 +11,7 @@ from ..nn import utils
 class BiRecurrentConv(nn.Module):
     def __init__(self, word_dim, num_words, char_dim, num_chars, trig_dim, num_trigs, num_filters, kernel_size,
                  rnn_mode, hidden_size, num_layers, num_labels, tag_space=0,
-                 embedd_word=None, embedd_char=None, p_in=0.2, p_rnn=0.5):
+                 embedd_word=None, embedd_char=None, p_in=0.33, p_rnn=0.5):
         super(BiRecurrentConv, self).__init__()
 
         self.word_embedd = Embedding(num_words, word_dim, init_embedding=embedd_word)

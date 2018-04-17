@@ -14,6 +14,7 @@ sys.path.append("..")
 
 import time
 import argparse
+import torch.nn as nn
 import uuid
 from finaleval_plot import plot, finaleval
 import numpy as np
@@ -103,6 +104,11 @@ def main():
     parser.add_argument('--gamma', type=float, default=0.0, help='weight for regularization')
     parser.add_argument('--dropout', choices=['std', 'variational'], help='type of dropout', required=True)
     parser.add_argument('--p', type=float, default=0.5, help='dropout rate')
+
+    parser.add_argument('--num_layers', type=int, default=1, help='Number of filters in CNN')
+    parser.add_argument('--p_in', type=float, default=0.33, help='dropout rate for input embeddings')
+    parser.add_argument('--p_out', type=float, default=0.33, help='dropout rate for output layer')
+
     parser.add_argument('--bigram', action='store_true', help='bi-gram parameter for CRF')
     parser.add_argument('--schedule', type=int, help='schedule for learning rate decay')
     parser.add_argument('--unk_replace', type=float, default=0., help='The rate to replace a singleton word with UNK')
@@ -196,8 +202,9 @@ def main():
     char_dim = args.char_dim
     trig_dim = args.trig_dim
     window = 3
-    num_layers = 1
+    num_layers = args.num_layers
     tag_space = args.tag_space
+    initializer = nn.init.xavier_uniform
 
     if args.dropout == 'std':
         #print(tag_space, 'tag space', trig_dim, chunk_alphabet.size())
@@ -325,7 +332,7 @@ def main():
     plot(str(uid),res_path)
 
 
-    
+
     # TODO: call finaleval and evaluate based on the final file what is the best model score
 if __name__ == '__main__':
     main()

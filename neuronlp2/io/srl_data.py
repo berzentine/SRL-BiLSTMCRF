@@ -1,4 +1,4 @@
-__author__ = 'nidhi'
+__author__ = 'Nidhi'
 
 import os.path
 import random

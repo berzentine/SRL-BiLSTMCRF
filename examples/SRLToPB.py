@@ -1,5 +1,5 @@
 from __future__ import print_function
-__author__ = 'nidhi'
+__author__ = 'Nidhi'
 """
 Implementation of Tranfer Learning Argument-Trigger Modelling from SRL CoNLL data using Bi-directional LSTM-CNNs-CRF model
 """
@@ -285,7 +285,9 @@ def main():
                 sys.stdout.flush()
                 num_back = len(log_info)
 
-            break
+            #break
+            # TODO: If keyboard interrupt, kill the process and just call transfer once before killing
+
 
         sys.stdout.write("\b" * num_back)
         sys.stdout.write(" " * num_back)
@@ -310,8 +312,8 @@ def main():
 
         print('dev acc: %.2f%%, precision: %.2f%%, recall: %.2f%%, F1: %.2f%%' % (acc, precision, recall, f1))
 
-        # TODO: delete this
-        best_model_wts = copy.deepcopy(network.state_dict())
+        """# TODO: delete this
+        best_model_wts = copy.deepcopy(network.state_dict())"""
 
         if dev_f1 < f1:
             dev_f1 = f1
@@ -344,7 +346,6 @@ def main():
             optim = SGD(network.parameters(), lr=lr, momentum=momentum, weight_decay=gamma, nesterov=True)
 
     #plot(str(uid),res_path)
-    # TODO: from here
     def transfer(network):
         print('In transfer')
         pb_alphabet = transfer_alphabet

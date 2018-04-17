@@ -1,5 +1,5 @@
 #from __future__ import print_function
-__author__ = 'nidhi'
+__author__ = 'Nidhi'
 """
 Post-process wrapper for evaluating SRL
 """

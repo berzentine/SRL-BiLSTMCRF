@@ -1,4 +1,4 @@
-__author__ = 'nidhi'
+__author__ = 'Nidhi'
 """
  CoNLL SRL metric are based on exact span matching. This metric implements span
  based precision and recall metrics for a BIO tagging scheme. It produces P, R, F1
